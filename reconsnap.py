@@ -24,7 +24,7 @@ import urllib.request
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 UA = "reconsnap/1.0 (+https://cobrasec.pro)"
 TIMEOUT = 8
 
@@ -133,8 +133,17 @@ def grade(score):
 
 
 def run(domain):
-    print(f"\n{C['r']}{C['b']}  reconsnap{C['x']} {C['d']}v{__version__} · CobraSEC · passive external snapshot{C['x']}")
-    print(f"{C['d']}  target: {domain}   (passive checks only — authorised targets only){C['x']}\n")
+    r, d, b, x = C['r'], C['d'], C['b'], C['x']
+    print(rf"""
+{r}  ██████╗ ███████╗ ██████╗ ██████╗ ███╗   ██╗███████╗███╗   ██╗ █████╗ ██████╗
+  ██╔══██╗██╔════╝██╔════╝██╔═══██╗████╗  ██║██╔════╝████╗  ██║██╔══██╗██╔══██╗
+  ██████╔╝█████╗  ██║     ██║   ██║██╔██╗ ██║███████╗██╔██╗ ██║███████║██████╔╝
+  ██╔══██╗██╔══╝  ██║     ██║   ██║██║╚██╗██║╚════██║██║╚██╗██║██╔══██║██╔═══╝
+  ██║  ██║███████╗╚██████╗╚██████╔╝██║ ╚████║███████║██║ ╚████║██║  ██║██║
+  ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝{x}
+  {d}v{__version__}  ·  external attack-surface snapshot{x}     {r}·{x} {b}C o b r a S E C{x} {r}·{x}
+""")
+    print(f"  {d}target: {C['c']}{domain}{d}   ·   passive checks only — authorised targets only{x}\n")
 
     hdr = check_headers(domain)
     tls = check_tls(domain)
@@ -200,7 +209,10 @@ def run(domain):
         print(f"\n  {C['d']}sample subdomains:{C['x']} " + ", ".join(subs[:8]) +
               (f" (+{len(subs) - 8} more)" if len(subs) > 8 else ""))
 
-    print(f"\n  {C['b']}Grade: {C[gc]}{g}{C['x']}  {C['d']}({score}/100 external posture){C['x']}")
+    print()
+    print(f"  {C[gc]}╭─────────╮{C['x']}")
+    print(f"  {C[gc]}│    {C['b']}{g}{C['x']}{C[gc]}    │{C['x']}   {C['b']}{score}/100{C['x']}  {C['d']}external posture grade{C['x']}")
+    print(f"  {C[gc]}╰─────────╯{C['x']}")
     print(f"\n{C['d']}  ── This is a passive surface snapshot. It sees only what faces the public.{C['x']}")
     print(f"{C['d']}  A CobraSEC engagement tests what this can't reach — auth, logic flaws,{C['x']}")
     print(f"{C['d']}  injection, chained exploits, real impact.{C['x']}")
