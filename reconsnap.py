@@ -157,7 +157,7 @@ def grade(score):
            ("C", "y") if score >= 70 else ("D", "y") if score >= 55 else ("F", "r")
 
 
-def run(domain):
+def run(domain, max_live=75, workers=20, probe_live=True):
     r, d, b, x = C['r'], C['d'], C['b'], C['x']
     print(rf"""
 {r}  ██████╗ ███████╗ ██████╗ ██████╗ ███╗   ██╗███████╗███╗   ██╗ █████╗ ██████╗
@@ -178,9 +178,9 @@ def run(domain):
 
     # liveness: probe discovered subdomains concurrently (capped so runtime stays bounded)
     live_subs = []
-    probe = subs[:75]
+    probe = subs[:max_live] if probe_live else []
     if probe:
-        with ThreadPoolExecutor(max_workers=20) as ex:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
             futs = [ex.submit(check_live, h) for h in probe]
             for f in as_completed(futs):
                 host, status = f.result()
@@ -293,6 +293,12 @@ def main():
         description="Passive external recon + security-posture snapshot (CobraSEC).")
     ap.add_argument("domain", help="domain to assess, e.g. example.com")
     ap.add_argument("--json", action="store_true", help="output raw JSON instead of a report")
+    ap.add_argument("--no-live", action="store_true",
+                    help="skip subdomain liveness probing (pure passive, no requests to subdomains)")
+    ap.add_argument("--max-live", type=int, default=75, metavar="N",
+                    help="max subdomains to probe for liveness (default: 75)")
+    ap.add_argument("--workers", type=int, default=20, metavar="N",
+                    help="concurrent workers for liveness probing (default: 20)")
     ap.add_argument("--version", action="version", version=f"reconsnap {__version__}")
     args = ap.parse_args()
 
@@ -312,10 +318,12 @@ def main():
         import contextlib
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            result = run(domain)
+            result = run(domain, max_live=args.max_live, workers=args.workers,
+                         probe_live=not args.no_live)
         print(json.dumps(result, indent=2))
     else:
-        result = run(domain)
+        result = run(domain, max_live=args.max_live, workers=args.workers,
+                     probe_live=not args.no_live)
 
     # exit code lets you gate CI / chain in scripts: 0 = A/B, 1 = C/D, 2 = F
     sys.exit({"A": 0, "B": 0, "C": 1, "D": 1, "F": 2}.get(result["grade"], 0))

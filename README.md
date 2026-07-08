@@ -55,8 +55,11 @@ reconsnap example.com
 ## Usage
 
 ```bash
-reconsnap example.com           # readable report + grade
-reconsnap example.com --json    # machine-readable JSON
+reconsnap example.com                 # readable report + grade
+reconsnap example.com --json          # machine-readable JSON
+reconsnap example.com --no-live       # skip subdomain liveness probing (pure passive)
+reconsnap example.com --max-live 200  # probe up to 200 subdomains for liveness (default 75)
+reconsnap example.com --workers 40    # concurrency for liveness probing (default 20)
 ```
 
 **Exit codes** (handy for CI or chaining): `0` = grade A/B, `1` = C/D, `2` = F.
