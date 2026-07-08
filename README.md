@@ -10,14 +10,19 @@ It is **passive and read-only**: every check is a normal request a browser or DN
 would make. No exploitation, no brute force, no intrusive scanning.
 
 ```
-  reconsnap  v1.0.0 · passive external snapshot
+  reconsnap  v1.1.0 · passive external snapshot
   target: example.com
 
   ● Header missing  content-security-policy — the strongest defence against XSS/injection
   ● TLS             TLSv1.3, cert by Let's Encrypt
-  ● Email           no DMARC record — no phishing protection
+  ● Email           SPF + DMARC enforced (p=reject)
+  ● Cookies         cookie(s) set without SameSite — CSRF exposure
+  ● Disclosure      security.txt published — clear route to report issues
+  ● Exposure        28 subdomains visible in certificate transparency, 11 responding live
 
-  Grade: C  (72/100 external posture)
+  live hosts: api.example.com, cdn.example.com, mail.example.com, ...
+
+  Grade: B  (84/100 external posture)
 ```
 
 ## What it checks
@@ -25,8 +30,10 @@ would make. No exploitation, no brute force, no intrusive scanning.
 - **Security headers** — HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy
 - **TLS** — protocol version, certificate issuer, expiry
 - **Email spoofing protection** — SPF and DMARC (including whether DMARC is actually enforced)
-- **Attack surface** — subdomains visible in Certificate Transparency logs
-- **Info leaks** — version-exposing `Server` headers
+- **Attack surface** — subdomains from Certificate Transparency logs, then probed concurrently so you see which ones are **actually live**
+- **Cookie flags** — `Secure`, `HttpOnly`, `SameSite` on any cookies the site sets
+- **Disclosure maturity** — RFC 9116 `security.txt`
+- **Info leaks** — version-exposing `Server` and `X-Powered-By` headers
 
 ## Install
 
@@ -50,6 +57,12 @@ reconsnap example.com
 ```bash
 reconsnap example.com           # readable report + grade
 reconsnap example.com --json    # machine-readable JSON
+```
+
+**Exit codes** (handy for CI or chaining): `0` = grade A/B, `1` = C/D, `2` = F.
+
+```bash
+reconsnap example.com || echo "posture needs attention"
 ```
 
 ## Scope & ethics

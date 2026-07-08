@@ -24,7 +24,7 @@ import urllib.request
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 UA = "reconsnap/1.0 (+https://cobrasec.pro)"
 TIMEOUT = 8
 
@@ -90,12 +90,37 @@ def check_headers(domain):
     try:
         with _get(f"https://{domain}") as r:
             hdrs = {k.lower(): v for k, v in r.headers.items()}
+            raw_cookies = r.headers.get_all("Set-Cookie") or []
         server = hdrs.get("server")
+        powered = hdrs.get("x-powered-by")
         for h, why in wanted.items():
             (present if h in hdrs else missing)[h] = why
     except Exception:
         return None
-    return {"present": present, "missing": missing, "server": server}
+    # cookie-flag posture: only meaningful if the site actually sets cookies
+    cookies = None
+    if raw_cookies:
+        joined = " ".join(c.lower() for c in raw_cookies)
+        cookies = {
+            "count": len(raw_cookies),
+            "secure": "secure" in joined,
+            "httponly": "httponly" in joined,
+            "samesite": "samesite" in joined,
+        }
+    return {"present": present, "missing": missing, "server": server,
+            "powered_by": powered, "cookies": cookies}
+
+
+def check_securitytxt(domain):
+    """RFC 9116 security.txt — a real vulnerability-disclosure maturity signal."""
+    for path in ("/.well-known/security.txt", "/security.txt"):
+        try:
+            with _get(f"https://{domain}{path}") as r:
+                if r.status == 200 and "text" in (r.headers.get("content-type") or "").lower():
+                    return True
+        except Exception:
+            continue
+    return False
 
 
 def check_tls(domain):
@@ -148,7 +173,20 @@ def run(domain):
     hdr = check_headers(domain)
     tls = check_tls(domain)
     email = check_email(domain)
+    sectxt = check_securitytxt(domain)
     subs = check_subdomains(domain)
+
+    # liveness: probe discovered subdomains concurrently (capped so runtime stays bounded)
+    live_subs = []
+    probe = subs[:75]
+    if probe:
+        with ThreadPoolExecutor(max_workers=20) as ex:
+            futs = [ex.submit(check_live, h) for h in probe]
+            for f in as_completed(futs):
+                host, status = f.result()
+                if status is not None:
+                    live_subs.append(host)
+        live_subs.sort()
 
     score = 100
     lines = []
@@ -168,6 +206,20 @@ def run(domain):
         if hdr.get("server") and any(c.isdigit() for c in hdr["server"]):
             lines.append((C['y'], "Info leak", f"Server header exposes version: {hdr['server']}"))
             score -= 4
+        if hdr.get("powered_by"):
+            lines.append((C['y'], "Info leak", f"X-Powered-By exposes tech: {hdr['powered_by']}"))
+            score -= 3
+        ck = hdr.get("cookies")
+        if ck:
+            weak = [flag for flag in ("secure", "httponly") if not ck[flag]]
+            if weak:
+                lines.append((C['y'], "Cookies", f"cookie(s) set without {', '.join(weak)} flag"))
+                score -= 4
+            elif not ck["samesite"]:
+                lines.append((C['y'], "Cookies", "cookie(s) set without SameSite — CSRF exposure"))
+                score -= 2
+            else:
+                lines.append((C['g'], "Cookies", "cookies carry Secure + HttpOnly + SameSite"))
 
     # tls (25)
     if "error" in tls:
@@ -196,16 +248,27 @@ def run(domain):
     if email["spf"] and email["dmarc"] and email["dmarc_policy"] in ("quarantine", "reject"):
         lines.append((C['g'], "Email", f"SPF + DMARC enforced (p={email['dmarc_policy']})"))
 
+    # security.txt (disclosure maturity — advisory, small credit)
+    if sectxt:
+        lines.append((C['g'], "Disclosure", "security.txt published — clear route to report issues"))
+    else:
+        lines.append((C['d'], "Disclosure", "no security.txt — no advertised way to report a vuln"))
+
     # exposure (advisory)
     if subs:
-        lines.append((C['c'], "Exposure", f"{len(subs)} subdomains visible in certificate transparency"))
+        extra = f", {len(live_subs)} responding live" if probe else ""
+        lines.append((C['c'], "Exposure",
+                      f"{len(subs)} subdomains visible in certificate transparency{extra}"))
 
     score = max(0, min(100, score))
     g, gc = grade(score)
 
     for col, tag, msg in lines:
         print(f"  {col}●{C['x']} {C['b']}{tag:14}{C['x']} {msg}")
-    if subs:
+    if live_subs:
+        print(f"\n  {C['d']}live hosts:{C['x']} " + ", ".join(live_subs[:8]) +
+              (f" (+{len(live_subs) - 8} more)" if len(live_subs) > 8 else ""))
+    elif subs:
         print(f"\n  {C['d']}sample subdomains:{C['x']} " + ", ".join(subs[:8]) +
               (f" (+{len(subs) - 8} more)" if len(subs) > 8 else ""))
 
@@ -220,7 +283,8 @@ def run(domain):
     print(f"  {C['c']}→ Book an engagement: https://cobrasec.pro{C['x']}\n")
 
     return {"domain": domain, "score": score, "grade": g,
-            "headers": hdr, "tls": tls, "email": email, "subdomains": subs}
+            "headers": hdr, "tls": tls, "email": email, "security_txt": sectxt,
+            "subdomains": subs, "live_subdomains": live_subs}
 
 
 def main():
@@ -251,7 +315,10 @@ def main():
             result = run(domain)
         print(json.dumps(result, indent=2))
     else:
-        run(domain)
+        result = run(domain)
+
+    # exit code lets you gate CI / chain in scripts: 0 = A/B, 1 = C/D, 2 = F
+    sys.exit({"A": 0, "B": 0, "C": 1, "D": 1, "F": 2}.get(result["grade"], 0))
 
 
 if __name__ == "__main__":
