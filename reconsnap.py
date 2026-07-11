@@ -62,7 +62,7 @@ def check_subdomains(domain):
             for row in json.load(r):
                 for n in row.get("name_value", "").split("\n"):
                     n = n.strip().lstrip("*.").lower()
-                    if n.endswith(domain) and "@" not in n:
+                    if (n == domain or n.endswith("." + domain)) and "@" not in n:
                         subs.add(n)
     except Exception:
         pass
