@@ -180,6 +180,7 @@ def run(domain, max_live=75, workers=20, probe_live=True):
     live_subs = []
     probe = subs[:max_live] if probe_live else []
     if probe:
+        workers = max(1, workers)
         with ThreadPoolExecutor(max_workers=workers) as ex:
             futs = [ex.submit(check_live, h) for h in probe]
             for f in as_completed(futs):
