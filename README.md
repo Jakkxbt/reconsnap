@@ -1,4 +1,19 @@
-# reconsnap
+<p align="center">
+  <img src="assets/banner.png" alt="CobraSEC · Red Arsenal · reconsnap" width="100%">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/CobraSEC-Red_Arsenal-ef4444?style=for-the-badge&labelColor=1a0a0a">
+  <img src="https://img.shields.io/badge/License-MIT-f87171?style=for-the-badge&labelColor=1a0a0a">
+  <img src="https://img.shields.io/badge/Python-3.x-fca5a5?style=for-the-badge&labelColor=1a0a0a">
+  <img src="https://img.shields.io/badge/Status-Active-16a34a?style=for-the-badge&labelColor=1a0a0a">
+</p>
+
+<h1 align="center">reconsnap</h1>
+<p align="center"><b>External recon & security-posture snapshot — headers, TLS, SPF/DMARC, subdomains</b><br><sub><i>CobraSEC · Offense informs Defense.</i></sub></p>
+
+---
+
 
 **Fast external recon + security-posture snapshot. One command, no dependencies.**
 
