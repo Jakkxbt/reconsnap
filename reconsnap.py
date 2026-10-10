@@ -139,16 +139,84 @@ def check_tls(domain):
         return {"error": str(e)[:80]}
 
 
+# second-level public suffixes where the registrable (organizational) domain is the
+# last THREE labels, not two (UK-heavy, since the SMB funnel is UK-focused, + common others)
+_MULTI_SUFFIX = {
+    "co.uk", "org.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk", "sch.uk", "ac.uk", "gov.uk", "nhs.uk",
+    "com.au", "net.au", "org.au", "co.nz", "org.nz", "co.za", "com.br", "co.in", "com.sg",
+}
+
+def org_domain(domain):
+    """Best-effort organizational (registrable) domain — handles co.uk-style suffixes."""
+    parts = domain.lower().strip(".").split(".")
+    if len(parts) <= 2:
+        return ".".join(parts)
+    if ".".join(parts[-2:]) in _MULTI_SUFFIX and len(parts) >= 3:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+
+def doh_has_mx(domain):
+    """True if the domain publishes MX records (i.e. is set up to receive mail)."""
+    url = "https://cloudflare-dns.com/dns-query?" + urllib.parse.urlencode(
+        {"name": domain, "type": "MX"})
+    req = urllib.request.Request(url, headers={"accept": "application/dns-json", "User-Agent": UA})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            data = json.load(r)
+        return any(a.get("type") == 15 for a in data.get("Answer", []))
+    except Exception:
+        return False
+
+
+def _parse_dmarc(rec):
+    """Pull p= and sp= out of a DMARC TXT record."""
+    p = sp = None
+    for part in rec.split(";"):
+        kv = part.strip().lower()
+        if kv.startswith("p="):
+            p = kv.split("=", 1)[1].strip()
+        elif kv.startswith("sp="):
+            sp = kv.split("=", 1)[1].strip()
+    return p, sp
+
+
 def check_email(domain):
+    """SPF/DMARC assessment that models how receivers actually evaluate a domain:
+    - DMARC is inherited from the organizational domain when absent on a subdomain
+      (RFC 7489 tree-walk; the org record's sp= governs subdomains).
+    - A missing SPF record is only a real exposure on a domain that sends/receives mail
+      (has MX) or on the organizational domain itself — a non-mail subdomain correctly
+      has no SPF and must not be penalised for it."""
+    org = org_domain(domain)
+    is_org = (domain == org)
+    has_mx = doh_has_mx(domain)
+
     spf = any(t.lower().startswith("v=spf1") for t in doh_txt(domain))
-    dmarc_recs = doh_txt(f"_dmarc.{domain}")
-    dmarc = next((t for t in dmarc_recs if t.lower().startswith("v=dmarc1")), None)
-    policy = None
-    if dmarc:
-        for part in dmarc.split(";"):
-            if part.strip().lower().startswith("p="):
-                policy = part.split("=", 1)[1].strip().lower()
-    return {"spf": spf, "dmarc": bool(dmarc), "dmarc_policy": policy}
+    # missing SPF only matters where mail is plausibly sent, or on the org/apex domain
+    spf_relevant = has_mx or is_org
+
+    # DMARC: check the host itself, then fall back to the organizational domain
+    self_rec = next((t for t in doh_txt(f"_dmarc.{domain}") if t.lower().startswith("v=dmarc1")), None)
+    inherited = False
+    if self_rec:
+        p, _ = _parse_dmarc(self_rec)
+        policy = p
+    elif not is_org:
+        org_rec = next((t for t in doh_txt(f"_dmarc.{org}") if t.lower().startswith("v=dmarc1")), None)
+        if org_rec:
+            inherited = True
+            p, sp = _parse_dmarc(org_rec)
+            policy = sp or p          # sp= governs subdomains; else the org p= applies
+        else:
+            policy = None
+    else:
+        policy = None
+
+    dmarc = bool(self_rec) or inherited
+    return {"spf": spf, "dmarc": dmarc, "dmarc_policy": policy,
+            "dmarc_inherited": inherited, "has_mx": has_mx,
+            "is_org_domain": is_org, "spf_relevant": spf_relevant, "org_domain": org}
 
 
 # ── scoring ─────────────────────────────────────────────────────────────────
@@ -239,13 +307,15 @@ def run(domain, max_live=75, workers=20, probe_live=True):
         elif d < 15:
             lines.append((C['y'], "TLS", f"certificate expires in {d} days")); score -= 5
 
-    # email (25)
-    if not email["spf"]:
+    # email (25) — org-aware: SPF only matters on mail/org domains; DMARC inherits from the org
+    if not email["spf"] and email.get("spf_relevant", True):
         lines.append((C['r'], "Email", "no SPF record — domain is easy to spoof")); score -= 12
     if not email["dmarc"]:
         lines.append((C['r'], "Email", "no DMARC record — no phishing protection")); score -= 13
     elif email["dmarc_policy"] in (None, "none"):
         lines.append((C['y'], "Email", "DMARC present but policy is 'none' (monitor only)")); score -= 5
+    elif email.get("dmarc_inherited"):
+        lines.append((C['g'], "Email", f"DMARC inherited from {email.get('org_domain')} (p={email['dmarc_policy']})"))
     if email["spf"] and email["dmarc"] and email["dmarc_policy"] in ("quarantine", "reject"):
         lines.append((C['g'], "Email", f"SPF + DMARC enforced (p={email['dmarc_policy']})"))
 
